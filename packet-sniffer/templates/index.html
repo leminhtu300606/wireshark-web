@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Packet Sniffer - Network Analyzer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 Packet Sniffer</h1>
+            <p>Network Traffic Analyzer & Monitor - Hỗ trợ IPv4, IPv6, FTP, SMTP, POP3, IMAP, HTTP</p>
+        </div>
+
+        <div class="control-panel">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="protocol">Protocol</label>
+                    <select id="protocol">
+                        <option value="">Tất cả</option>
+                        <option value="tcp">TCP</option>
+                        <option value="udp">UDP</option>
+                        <option value="icmp">ICMP</option>
+                        <option value="arp">ARP</option>
+                        <option value="ipv6">IPv6</option>
+                        <option value="dns">DNS</option>
+                        <option value="ftp">FTP</option>
+                        <option value="smtp">SMTP</option>
+                        <option value="pop3">POP3</option>
+                        <option value="imap">IMAP</option>
+                        <option value="http">HTTP</option>
+                        <option value="https">HTTPS</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="ip">IP Address (IPv4/IPv6)</label>
+                    <input type="text" id="ip" placeholder="8.8.8.8 hoặc 2001:4860:4860::8888">
+                </div>
+
+                <div class="form-group">
+                    <label for="domain">Domain</label>
+                    <input type="text" id="domain" placeholder="google.com">
+                </div>
+
+                <div class="form-group">
+                    <label for="port">Port</label>
+                    <input type="number" id="port" placeholder="80, 443, 53...">
+                </div>
+
+                <div class="form-group">
+                    <label for="max_packets">Max Packets</label>
+                    <input type="number" id="max_packets" placeholder="Không giới hạn">
+                </div>
+
+                <div class="form-group">
+                    <label for="interface">Interface</label>
+                    <input type="text" id="interface" placeholder="eth0, wlan0...">
+                </div>
+            </div>
+
+            <div class="checkbox-group">
+                <input type="checkbox" id="ping_reply_only">
+                <label for="ping_reply_only">Chỉ bắt Ping Reply (ICMP Echo Reply)</label>
+            </div>
+
+            <div class="checkbox-group">
+                <input type="checkbox" id="detect_security">
+                <label for="detect_security">🔒 Phát hiện tấn công (Port Scan, SYN Flood, ARP Spoofing)</label>
+            </div>
+
+            <div class="button-group">
+                <button class="btn btn-start" id="startBtn" onclick="startCapture()">
+                    ▶ Bắt đầu bắt gói tin
+                </button>
+                <button class="btn btn-stop" id="stopBtn" onclick="stopCapture()" disabled>
+                    ⏹ Dừng
+                </button>
+                <button class="btn btn-clear" onclick="clearPackets()">
+                    🗑 Xóa
+                </button>
+            </div>
+        </div>
+
+        <div class="alert" id="alert"></div>
+
+        <div id="filterInfo" class="filter-info" style="display: none;">
+            <strong>🔍 Đang lọc:</strong> <span id="filterDetails"></span>
+        </div>
+
+        <div class="status-bar">
+            <div class="status-indicator">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Chưa bắt đầu</span>
+            </div>
+            <div class="stats">
+                <div class="stat-item">
+                    <div class="stat-value" id="totalPackets">0</div>
+                    <div class="stat-label">Tổng gói tin</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="packetsPerSec">0</div>
+                    <div class="stat-label">Gói/giây</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="tcpCount">0</div>
+                    <div class="stat-label">TCP</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="udpCount">0</div>
+                    <div class="stat-label">UDP</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="packets-container">
+            <table class="packets-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Time</th>
+                        <th>Protocol</th>
+                        <th>Source</th>
+                        <th>Destination</th>
+                        <th>Length</th>
+                        <th>Info</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="packetsBody">
+                    <tr>
+                        <td colspan="8" class="no-packets">
+                            Chưa có gói tin nào. Nhấn "Bắt đầu bắt gói tin" để bắt đầu.
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- User Guide Section -->
+        <div class="user-guide-section">
+            <div class="guide-header" onclick="toggleGuide()">
+                <h2>📖 Hướng Dẫn Sử Dụng</h2>
+                <span class="toggle-icon" id="toggleIcon">▼</span>
+            </div>
+            <div class="guide-content" id="guideContent">
+                <div class="guide-grid">
+                    <div class="guide-card">
+                        <div class="guide-card-header">
+                            <span class="guide-icon">🚀</span>
+                            <h3>Bắt Đầu Nhanh</h3>
+                        </div>
+                        <ol class="guide-list">
+                            <li>Chạy ứng dụng với quyền root: <code>sudo python3 d.py</code></li>
+                            <li>Mở trình duyệt tại <code>http://localhost:5000</code></li>
+                            <li>Nhấn nút <strong>"▶ Bắt đầu bắt gói tin"</strong></li>
+                            <li>Quan sát các gói tin xuất hiện trong bảng</li>
+                            <li>Click <strong>"📋 Chi tiết"</strong> để xem phân tích OSI 7 tầng</li>
+                        </ol>
+                    </div>
+
+                    <div class="guide-card">
+                        <div class="guide-card-header">
+                            <span class="guide-icon">🔍</span>
+                            <h3>Bộ Lọc Cơ Bản</h3>
+                        </div>
+                        <ul class="guide-list">
+                            <li><strong>Protocol:</strong> Lọc theo giao thức (TCP, UDP, HTTP, FTP, DNS...)</li>
+                            <li><strong>IP Address:</strong> Lọc theo địa chỉ IPv4 hoặc IPv6
+                                <div class="guide-example">VD: <code>8.8.8.8</code> hoặc <code>2001:4860:4860::8888</code></div>
+                            </li>
+                            <li><strong>Domain:</strong> Tự động resolve sang IP (hỗ trợ IPv4 & IPv6)
+                                <div class="guide-example">VD: <code>google.com</code>, <code>facebook.com</code></div>
+                            </li>
+                            <li><strong>Port:</strong> Lọc theo cổng dịch vụ
+                                <div class="guide-example">VD: <code>80</code> (HTTP), <code>443</code> (HTTPS), <code>21</code> (FTP)</div>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <div class="guide-card">
+                        <div class="guide-card-header">
+                            <span class="guide-icon">🎯</span>
+                            <h3>Ví Dụ Thực Tế</h3>
+                        </div>
+                        <div class="example-list">
+                            <div class="example-item">
+                                <strong>🌐 Bắt traffic HTTP:</strong>
+                                <div class="example-config">
+                                    Protocol: <code>HTTP</code> | Port: <code>80</code>
+                                </div>
+                                <div class="example-desc">Sau đó truy cập <code>http://example.com</code></div>
+                            </div>
+                            <div class="example-item">
+                                <strong>📧 Bắt email SMTP:</strong>
+                                <div class="example-config">
+                                    Protocol: <code>SMTP</code> | Port: <code>25</code>
+                                </div>
+                            </div>
+                            <div class="example-item">
+                                <strong>🌍 Bắt traffic IPv6:</strong>
+                                <div class="example-config">
+                                    Protocol: <code>IPv6</code> | Domain: <code>ipv6.google.com</code>
+                                </div>
+                            </div>
+                            <div class="example-item">
+                                <strong>🔍 Bắt DNS queries:</strong>
+                                <div class="example-config">
+                                    Protocol: <code>DNS</code> | Port: <code>53</code>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="guide-card">
+                        <div class="guide-card-header">
+                            <span class="guide-icon">🔐</span>
+                            <h3>Tính Năng Bảo Mật</h3>
+                        </div>
+                        <ul class="guide-list">
+                            <li><strong>Port Scan Detection:</strong> Phát hiện khi có người scan port</li>
+                            <li><strong>SYN Flood Detection:</strong> Phát hiện tấn công từ chối dịch vụ</li>
+                            <li><strong>ARP Spoofing Detection:</strong> Phát hiện tấn công giả mạo ARP</li>
+                        </ul>
+                        <div class="guide-note">
+                            💡 <strong>Tip:</strong> Bật checkbox "🔒 Phát hiện tấn công" để kích hoạt
+                        </div>
+                    </div>
+
+                    <div class="guide-card">
+                        <div class="guide-card-header">
+                            <span class="guide-icon">📊</span>
+                            <h3>Phân Tích OSI 7 Tầng</h3>
+                        </div>
+                        <div class="osi-layers-info">
+                            <div class="osi-layer-item">
+                                <span class="layer-badge">1</span>
+                                <span><strong>Physical Layer:</strong> Thông tin vật lý, kích thước frame</span>
+                            </div>
+                            <div class="osi-layer-item">
+                                <span class="layer-badge">2</span>
+                                <span><strong>Data Link:</strong> Địa chỉ MAC, Ethernet/ARP</span>
+                            </div>
+                            <div class="osi-layer-item">
+                                <span class="layer-badge">3</span>
+                                <span><strong>Network:</strong> Địa chỉ IP, TTL, routing</span>
+                            </div>
+                            <div class="osi-layer-item">
+                                <span class="layer-badge">4</span>
+                                <span><strong>Transport:</strong> TCP/UDP, port, flags, seq/ack</span>
+                            </div>
+                            <div class="osi-layer-item">
+                                <span class="layer-badge">5</span>
+                                <span><strong>Session:</strong> Quản lý phiên kết nối</span>
+                            </div>
+                            <div class="osi-layer-item">
+                                <span class="layer-badge">6</span>
+                                <span><strong>Presentation:</strong> Mã hóa, nén dữ liệu</span>
+                            </div>
+                            <div class="osi-layer-item">
+                                <span class="layer-badge">7</span>
+                                <span><strong>Application:</strong> HTTP, FTP, SMTP, DNS...</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="guide-card">
+                        <div class="guide-card-header">
+                            <span class="guide-icon">⚙️</span>
+                            <h3>Cấu Hình Nâng Cao</h3>
+                        </div>
+                        <ul class="guide-list">
+                            <li><strong>Interface:</strong> Chỉ định card mạng cụ thể
+                                <div class="guide-example">VD: <code>eth0</code>, <code>wlan0</code>, <code>enp0s3</code></div>
+                            </li>
+                            <li><strong>Max Packets:</strong> Giới hạn số gói tin bắt</li>
+                            <li><strong>Ping Reply Only:</strong> Chỉ bắt ICMP Echo Reply (response của ping)</li>
+                        </ul>
+                        <div class="guide-note">
+                            💡 <strong>Tip:</strong> Để trống để bắt tất cả gói tin trên tất cả interface
+                        </div>
+                    </div>
+
+                    <div class="guide-card">
+                        <div class="guide-card-header">
+                            <span class="guide-icon">🎓</span>
+                            <h3>Các Port Thông Dụng</h3>
+                        </div>
+                        <div class="port-table">
+                            <div class="port-row">
+                                <span class="port-num">21</span>
+                                <span class="port-name">FTP</span>
+                                <span class="port-desc">File Transfer Protocol</span>
+                            </div>
+                            <div class="port-row">
+                                <span class="port-num">22</span>
+                                <span class="port-name">SSH</span>
+                                <span class="port-desc">Secure Shell</span>
+                            </div>
+                            <div class="port-row">
+                                <span class="port-num">25</span>
+                                <span class="port-name">SMTP</span>
+                                <span class="port-desc">Email gửi đi</span>
+                            </div>
+                            <div class="port-row">
+                                <span class="port-num">53</span>
+                                <span class="port-name">DNS</span>
+                                <span class="port-desc">Domain Name System</span>
+                            </div>
+                            <div class="port-row">
+                                <span class="port-num">80</span>
+                                <span class="port-name">HTTP</span>
+                                <span class="port-desc">Web không mã hóa</span>
+                            </div>
+                            <div class="port-row">
+                                <span class="port-num">110</span>
+                                <span class="port-name">POP3</span>
+                                <span class="port-desc">Email nhận về</span>
+                            </div>
+                            <div class="port-row">
+                                <span class="port-num">143</span>
+                                <span class="port-name">IMAP</span>
+                                <span class="port-desc">Email đồng bộ</span>
+                            </div>
+                            <div class="port-row">
+                                <span class="port-num">443</span>
+                                <span class="port-name">HTTPS</span>
+                                <span class="port-desc">Web có mã hóa SSL/TLS</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="guide-card">
+                        <div class="guide-card-header">
+                            <span class="guide-icon">⚠️</span>
+                            <h3>Lưu Ý Quan Trọng</h3>
+                        </div>
+                        <ul class="guide-list warning-list">
+                            <li>🔐 <strong>Quyền Root:</strong> Phải chạy với <code>sudo</code> để bắt được gói tin</li>
+                            <li>🚫 <strong>Đạo Đức:</strong> Chỉ sử dụng trên mạng của bạn hoặc có sự cho phép</li>
+                            <li>⚡ <strong>Hiệu Năng:</strong> Bắt nhiều gói tin có thể làm chậm hệ thống</li>
+                            <li>🔒 <strong>Bảo Mật:</strong> Không bắt gói tin trên mạng công cộng không rõ nguồn gốc</li>
+                            <li>💾 <strong>Bộ Nhớ:</strong> Nên đặt giới hạn Max Packets khi bắt lâu dài</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p>🔬 Packet Sniffer - Network Analysis Tool | Hỗ trợ IPv4, IPv6, HTTP, FTP, SMTP, POP3, IMAP, DNS</p>
+            <p style="margin-top: 10px; font-size: 0.9em; opacity: 0.8;">
+                💡 Sử dụng có trách nhiệm - Chỉ phân tích mạng của bạn hoặc có sự cho phép
+            </p>
+        </div>
+    </div>
+
+    <!-- Modal Chi Tiết Packet -->
+    <div id="packetModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>📦 Chi Tiết Gói Tin - OSI 7 Tầng</h2>
+                <button class="close-btn" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <div class="loading"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script>
+        function toggleGuide() {
+            const content = document.getElementById('guideContent');
+            const icon = document.getElementById('toggleIcon');
+            
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                icon.textContent = '▼';
+            } else {
+                content.style.display = 'none';
+                icon.textContent = '▶';
+            }
+        }
+    </script>
+</body>
+</html>
