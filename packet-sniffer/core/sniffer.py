@@ -1,5 +1,5 @@
 """
-Main PacketSniffer class - refactored
+Main PacketSniffer class - Fixed and refactored
 """
 import socket
 import time
@@ -9,14 +9,16 @@ from collections import defaultdict
 
 from .parsers import (
     parse_ethernet_frame, parse_ipv4_packet, parse_ipv6_packet,
-    parse_arp_packet, parse_icmp_packet, parse_tcp_segment, parse_udp_segment
+    parse_arp_packet, parse_icmp_packet, parse_icmpv6_packet,
+    parse_tcp_segment, parse_udp_segment
 )
 from .protocols import decode_dns, decode_ftp, decode_smtp, decode_pop3, decode_imap
 from .security import SecurityDetector
 from .statistics import StatisticsTracker
 from .utils import (
     resolve_domain, get_hostname_display, get_protocol_name, get_icmp_type_name,
-    identify_application_protocol, get_service_name, is_text, is_encrypted
+    get_icmpv6_type_name, identify_application_protocol, get_service_name, 
+    is_text, is_encrypted
 )
 
 class PacketSniffer:
@@ -50,9 +52,13 @@ class PacketSniffer:
             print(f"[INFO] Lọc theo IP: {filter_ip}")
         
         if filter_domain:
+            print(f"[INFO] Đang phân giải domain '{filter_domain}'...")
             resolved_ips = resolve_domain(filter_domain)
-            self.filter_ips.update(resolved_ips)
-            print(f"[INFO] Domain '{filter_domain}' resolved to: {', '.join(resolved_ips)}")
+            if resolved_ips:
+                self.filter_ips.update(resolved_ips)
+                print(f"[INFO] Domain '{filter_domain}' resolved to: {', '.join(resolved_ips)}")
+            else:
+                print(f"[WARNING] Không thể phân giải domain '{filter_domain}', sẽ chỉ lọc theo tên")
         
         # Statistics tracker
         self.stats_tracker = StatisticsTracker()
@@ -86,6 +92,10 @@ class PacketSniffer:
     def icmp_packet(self, data):
         """Parse ICMP packet"""
         return parse_icmp_packet(data)
+    
+    def icmpv6_packet(self, data):
+        """Parse ICMPv6 packet"""
+        return parse_icmpv6_packet(data)
     
     def tcp_segment(self, data):
         """Parse TCP segment"""
@@ -123,6 +133,10 @@ class PacketSniffer:
         """Get ICMP type name"""
         return get_icmp_type_name(icmp_type)
     
+    def get_icmpv6_type_name(self, icmpv6_type):
+        """Get ICMPv6 type name"""
+        return get_icmpv6_type_name(icmpv6_type)
+    
     def identify_application_protocol(self, src_port, dest_port, data):
         """Identify application protocol"""
         return identify_application_protocol(src_port, dest_port, data)
@@ -154,10 +168,13 @@ class PacketSniffer:
             print(f"  SYN Flood phát hiện: {sec_stats['syn_floods']}")
     
     def process_packet(self, raw_data, packet_num, offline=False):
-        """Process packet - Main logic"""
+        """Process packet - Main logic with IPv6 and SMTP support"""
         self.stats_tracker.update('total')
         
         dest_mac, src_mac, eth_proto, data = self.ethernet_frame(raw_data)
+        
+        if not eth_proto:
+            return False
         
         # ARP
         if eth_proto == 0x0806:
@@ -182,6 +199,9 @@ class PacketSniffer:
             self.stats_tracker.update('ipv4')
             version, header_length, ttl, proto, src, target, data = self.ipv4_packet(data)
             
+            if not src or not target:
+                return False
+            
             # Check IP filter
             if self.filter_ips:
                 if src not in self.filter_ips and target not in self.filter_ips:
@@ -197,6 +217,9 @@ class PacketSniffer:
                 self.stats_tracker.update('icmp')
                 icmp_type, code, check_sum, data = self.icmp_packet(data)
                 
+                if icmp_type is None:
+                    return False
+                
                 if self.ping_reply_only and icmp_type != 0:
                     return False
                 
@@ -209,8 +232,12 @@ class PacketSniffer:
             elif proto == 6:
                 self.stats_tracker.update('tcp')
                 
+                result = self.tcp_segment(data)
+                if result[0] is None:
+                    return False
+                
                 (src_port, dest_port, sequence, acknowledgement, flag_ack, flag_fin, 
-                 flag_psh, flag_rst, flag_syn, flag_urg, data) = self.tcp_segment(data)
+                 flag_psh, flag_rst, flag_syn, flag_urg, data) = result
                 
                 # Port filter
                 if self.filter_port and (self.filter_port != src_port and self.filter_port != dest_port):
@@ -230,6 +257,12 @@ class PacketSniffer:
                     else:
                         return False
                 
+                # SMTP detection
+                if (src_port == 25 or dest_port == 25 or src_port == 587 or dest_port == 587) and data:
+                    smtp_data = self.decode_smtp(data)
+                    if smtp_data:
+                        pass  # SMTP packet detected
+                
                 # Security detection
                 if self.security_detector:
                     if flag_syn and not flag_ack:
@@ -245,7 +278,11 @@ class PacketSniffer:
             elif proto == 17:
                 self.stats_tracker.update('udp')
                 
-                src_port, dest_port, size, data = self.udp_segment(data)
+                result = self.udp_segment(data)
+                if result[0] is None:
+                    return False
+                
+                src_port, dest_port, size, data = result
                 
                 # Port filter
                 if self.filter_port and (self.filter_port != src_port and self.filter_port != dest_port):
@@ -276,12 +313,57 @@ class PacketSniffer:
             self.stats_tracker.update('ipv6')
             ipv6_info = self.ipv6_packet(data)
             
-            if self.filter_ips and ipv6_info:
+            if not ipv6_info:
+                return False
+            
+            # Check IP filter
+            if self.filter_ips:
                 if ipv6_info['src'] not in self.filter_ips and ipv6_info['dest'] not in self.filter_ips:
                     return False
             
-            if self.filter_protocol and self.filter_protocol.upper() != 'IPV6':
-                return False
+            # Update statistics
+            self.stats_tracker.update_conversation(ipv6_info['src'], ipv6_info['dest'])
+            
+            # Handle next header (protocol)
+            next_header = ipv6_info['next_header']
+            
+            # ICMPv6
+            if next_header == 58:
+                self.stats_tracker.update('icmp')
+                icmpv6_info = self.icmpv6_packet(ipv6_info['data'])
+                
+                if icmpv6_info:
+                    if self.ping_reply_only and icmpv6_info['type'] != 129:  # Echo Reply
+                        return False
+            
+            # TCP over IPv6
+            elif next_header == 6:
+                self.stats_tracker.update('tcp')
+                result = self.tcp_segment(ipv6_info['data'])
+                
+                if result[0] is not None:
+                    src_port, dest_port = result[0], result[1]
+                    
+                    # Port filter
+                    if self.filter_port and (self.filter_port != src_port and self.filter_port != dest_port):
+                        return False
+            
+            # UDP over IPv6
+            elif next_header == 17:
+                self.stats_tracker.update('udp')
+                result = self.udp_segment(ipv6_info['data'])
+                
+                if result[0] is not None:
+                    src_port, dest_port = result[0], result[1]
+                    
+                    # Port filter
+                    if self.filter_port and (self.filter_port != src_port and self.filter_port != dest_port):
+                        return False
+            
+            if self.filter_protocol:
+                filter_upper = self.filter_protocol.upper()
+                if filter_upper not in ['IPV6', 'ICMPV6']:
+                    return False
             
             return True
         
