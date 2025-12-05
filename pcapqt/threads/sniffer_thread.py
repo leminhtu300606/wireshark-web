@@ -6,11 +6,16 @@ from scapy.all import sniff, Ether, IP, TCP, UDP, ICMP, ARP, Raw
 class SnifferThread(QThread):
     packet_captured = pyqtSignal(object, dict)
 
-    def __init__(self):
+    def __init__(self, iface=None):
         super().__init__()
         self.is_running = False
         self.packet_count = 0
         self.start_time = None
+        self.iface = iface  # Network interface to capture from
+
+    def set_interface(self, iface):
+        """Set the network interface to capture from."""
+        self.iface = iface
 
     def run(self):
         self.is_running = True
@@ -26,7 +31,7 @@ class SnifferThread(QThread):
             self.packet_captured.emit(packet, packet_info)
 
         try:
-            sniff(prn=packet_handler, store=False, stop_filter=lambda x: not self.is_running)
+            sniff(prn=packet_handler, store=False, stop_filter=lambda x: not self.is_running, iface=self.iface)
         except Exception as e:
             print(f"Sniffing error: {e}")
 
