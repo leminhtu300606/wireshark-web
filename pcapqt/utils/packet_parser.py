@@ -1,7 +1,6 @@
 from scapy.all import Ether, IP, TCP, UDP, ICMP, ARP, Raw, DNS, DNSQR, DNSRR
 from datetime import datetime
 import struct
-import binascii
 
 
 class PacketParser:
@@ -26,32 +25,6 @@ class PacketParser:
         587: 'SMTP-Submission', 993: 'IMAPS', 995: 'POP3S',
         3306: 'MySQL', 3389: 'RDP', 5432: 'PostgreSQL', 6379: 'Redis',
         8080: 'HTTP-Alt', 8443: 'HTTPS-Alt', 27017: 'MongoDB'
-    }
-    
-    # Protocol to port mapping for filtering
-    PROTOCOL_PORTS = {
-        'ssh': [22],
-        'ftp': [20, 21],
-        'http': [80, 8080],
-        'https': [443, 8443],
-        'tls': [443, 8443],
-        'dns': [53],
-        'smtp': [25, 465, 587],
-        'pop3': [110, 995],
-        'imap': [143, 993],
-        'telnet': [23],
-        'ntp': [123],
-        'snmp': [161, 162],
-        'dhcp': [67, 68],
-        'mysql': [3306],
-        'rdp': [3389],
-    }
-    
-    # EtherType to protocol name mapping
-    ETHER_TYPES = {
-        0x0800: 'IPv4', 0x0806: 'ARP', 0x86DD: 'IPv6',
-        0x8100: 'VLAN', 0x88CC: 'LLDP', 0x8892: 'PROFINET',
-        0x88A8: 'QinQ', 0x8863: 'PPPoE-Discovery', 0x8864: 'PPPoE-Session'
     }
     
     DNS_TYPES = {
@@ -120,17 +93,7 @@ class PacketParser:
             info['protocol'] = 'ARP'
             info['src'] = packet[ARP].psrc
             info['dst'] = packet[ARP].pdst
-            op = packet[ARP].op
-            if op == 1:
-                info['info'] = f"Who has {packet[ARP].pdst}? Tell {packet[ARP].psrc}"
-            else:
-                info['info'] = f"{packet[ARP].psrc} is at {packet[ARP].hwsrc}"
-        elif Ether in packet:
-            # Non-IP Ethernet frame
-            ether_type = packet[Ether].type
-            proto_name = PacketParser.ETHER_TYPES.get(ether_type, f'Ethernet (0x{ether_type:04x})')
-            info['protocol'] = proto_name
-            info['info'] = f"EtherType: 0x{ether_type:04x}"
+            info['info'] = f"Who has {packet[ARP].pdst}? Tell {packet[ARP].psrc}"
 
         return info
 
@@ -144,7 +107,7 @@ class PacketParser:
         if sport in (67, 68) or dport in (67, 68): return 'DHCP'
         if sport == 21 or dport == 21: return 'FTP'
         if sport == 20 or dport == 20: return 'FTP-Data'
-        if sport == 25 or dport == 25 or sport == 587 or dport == 587 or sport == 465 or dport == 465: return 'SMTP'
+        if sport == 25 or dport == 25 or sport == 587 or dport == 587: return 'SMTP'
         if sport == 22 or dport == 22: return 'SSH'
         if sport == 110 or dport == 110 or sport == 995 or dport == 995: return 'POP3'
         if sport == 143 or dport == 143 or sport == 993 or dport == 993: return 'IMAP'
@@ -199,22 +162,7 @@ class PacketParser:
             details.append(['=== Layer 2: Data Link (Ethernet II) ===', ''])
             details.append(['Destination MAC', packet[Ether].dst])
             details.append(['Source MAC', packet[Ether].src])
-            ether_type = packet[Ether].type
-            ETHER_TYPE_NAMES = {
-                0x0800: 'IPv4', 0x0806: 'ARP', 0x86DD: 'IPv6',
-                0x8100: 'VLAN (802.1Q)', 0x88CC: 'LLDP', 0x8892: 'PROFINET'
-            }
-            type_name = ETHER_TYPE_NAMES.get(ether_type, '')
-            if type_name:
-                details.append(['EtherType', f"0x{ether_type:04x} ({type_name})"])
-            else:
-                details.append(['EtherType', f"0x{ether_type:04x}"])
-            
-            # Calculate Frame Check Sequence (FCS) - CRC32
-            raw_bytes = bytes(packet)
-            if len(raw_bytes) >= 14:
-                fcs = binascii.crc32(raw_bytes) & 0xffffffff
-                details.append(['Frame Check Sequence (FCS)', f"0x{fcs:08x}"])
+            details.append(['EtherType', f"{hex(packet[Ether].type)}"])
 
         # === Layer 3: Network ===
         if IP in packet:
@@ -384,20 +332,10 @@ class PacketParser:
             PacketParser._parse_dhcp_app(packet, details)
         elif sport == 21 or dport == 21:
             PacketParser._parse_ftp_app(packet, details)
-        elif sport == 25 or dport == 25 or sport == 587 or dport == 587 or sport == 465 or dport == 465:
+        elif sport == 25 or dport == 25 or sport == 587 or dport == 587:
             PacketParser._parse_smtp_app(packet, details)
         elif sport == 22 or dport == 22:
             PacketParser._parse_ssh_app(packet, details)
-        elif sport == 110 or dport == 110 or sport == 995 or dport == 995:
-            PacketParser._parse_pop3_app(packet, details)
-        elif sport == 143 or dport == 143 or sport == 993 or dport == 993:
-            PacketParser._parse_imap_app(packet, details)
-        elif sport == 123 or dport == 123:
-            PacketParser._parse_ntp_app(packet, details)
-        elif sport == 161 or dport == 161 or sport == 162 or dport == 162:
-            PacketParser._parse_snmp_app(packet, details)
-        elif sport == 23 or dport == 23:
-            PacketParser._parse_telnet_app(packet, details)
         elif Raw in packet:
             PacketParser._parse_raw_data(packet, details)
         
@@ -504,9 +442,7 @@ class PacketParser:
                     details.append(['FTP Response', line[:80]])
                 else:
                     parts = line.split(' ', 1)
-                    cmd = parts[0].upper()
-                    arg = parts[1][:50] if len(parts) > 1 else ''
-                    details.append(['FTP Command', f"{cmd} {arg}"])
+                    details.append(['FTP Command', f"{parts[0]} {parts[1][:50] if len(parts)>1 else ''}"])
         except: pass
 
     @staticmethod
@@ -538,123 +474,6 @@ class PacketParser:
                 details.append(['SSH Version', version_line])
             else:
                 details.append(['SSH Status', 'Encrypted packet'])
-        except: pass
-
-    @staticmethod
-    def _parse_pop3_app(packet, details):
-        """Parse POP3 protocol details."""
-        if Raw not in packet: return
-        try:
-            text = bytes(packet[Raw].load).decode('utf-8', errors='replace').strip()
-            lines = text.split('\r\n')
-            for line in lines[:3]:
-                if line.startswith('+OK'):
-                    details.append(['POP3 Response', f"+OK {line[4:60]}"])
-                elif line.startswith('-ERR'):
-                    details.append(['POP3 Error', f"-ERR {line[5:60]}"])
-                else:
-                    parts = line.split(' ', 1)
-                    cmd = parts[0].upper()
-                    arg = parts[1][:50] if len(parts) > 1 else ''
-                    if cmd in ('USER', 'PASS', 'LIST', 'RETR', 'DELE', 'QUIT', 'STAT', 'TOP', 'UIDL', 'NOOP', 'RSET'):
-                        details.append(['POP3 Command', f"{cmd} {arg}"])
-        except: pass
-
-    @staticmethod
-    def _parse_imap_app(packet, details):
-        """Parse IMAP protocol details."""
-        if Raw not in packet: return
-        try:
-            text = bytes(packet[Raw].load).decode('utf-8', errors='replace').strip()
-            lines = text.split('\r\n')
-            for line in lines[:3]:
-                if '* OK' in line or '* NO' in line or '* BAD' in line:
-                    details.append(['IMAP Response', line[:80]])
-                else:
-                    parts = line.split(' ', 2)
-                    if len(parts) >= 2:
-                        tag = parts[0]
-                        cmd = parts[1].upper()
-                        arg = parts[2][:40] if len(parts) > 2 else ''
-                        if cmd in ('LOGIN', 'SELECT', 'FETCH', 'SEARCH', 'LOGOUT', 'LIST', 'EXAMINE', 'CREATE', 'DELETE', 'STORE'):
-                            details.append(['IMAP Command', f"{tag} {cmd} {arg}"])
-        except: pass
-
-    @staticmethod
-    def _parse_ntp_app(packet, details):
-        """Parse NTP protocol details."""
-        if Raw not in packet: return
-        try:
-            payload = bytes(packet[Raw].load)
-            if len(payload) < 48: return
-            
-            # NTP packet structure
-            flags = payload[0]
-            leap = (flags >> 6) & 0x03
-            version = (flags >> 3) & 0x07
-            mode = flags & 0x07
-            
-            mode_names = {
-                0: 'Reserved', 1: 'Symmetric Active', 2: 'Symmetric Passive',
-                3: 'Client', 4: 'Server', 5: 'Broadcast', 6: 'Control', 7: 'Private'
-            }
-            
-            details.append(['NTP Version', version])
-            details.append(['NTP Mode', f"{mode} ({mode_names.get(mode, 'Unknown')})"])
-            details.append(['Stratum', payload[1]])
-            details.append(['Poll Interval', f"{2 ** payload[2]} seconds"])
-        except: pass
-
-    @staticmethod
-    def _parse_snmp_app(packet, details):
-        """Parse SNMP protocol details."""
-        if Raw not in packet: return
-        try:
-            payload = bytes(packet[Raw].load)
-            if len(payload) < 10: return
-            
-            # Basic SNMP parsing (ASN.1 BER encoded)
-            if payload[0] == 0x30:  # SEQUENCE
-                # Try to find version
-                if payload[2] == 0x02:  # INTEGER (version)
-                    version = payload[4]
-                    version_names = {0: 'SNMPv1', 1: 'SNMPv2c', 3: 'SNMPv3'}
-                    details.append(['SNMP Version', version_names.get(version, f'v{version}')])
-                
-                # Try to find community string for v1/v2c
-                if version in (0, 1):
-                    idx = 5
-                    if idx < len(payload) and payload[idx] == 0x04:  # OCTET STRING
-                        comm_len = payload[idx + 1]
-                        if idx + 2 + comm_len <= len(payload):
-                            community = payload[idx + 2:idx + 2 + comm_len].decode('utf-8', errors='replace')
-                            details.append(['Community', community[:30]])
-        except: pass
-
-    @staticmethod
-    def _parse_telnet_app(packet, details):
-        """Parse Telnet protocol details."""
-        if Raw not in packet: return
-        try:
-            payload = bytes(packet[Raw].load)
-            
-            # Check for Telnet IAC commands
-            if payload and payload[0] == 0xFF:  # IAC
-                iac_commands = {
-                    240: 'SE', 241: 'NOP', 242: 'Data Mark', 243: 'Break',
-                    244: 'Interrupt', 245: 'Abort', 246: 'Are You There',
-                    247: 'Erase Char', 248: 'Erase Line', 249: 'Go Ahead',
-                    250: 'SB', 251: 'WILL', 252: 'WONT', 253: 'DO', 254: 'DONT'
-                }
-                if len(payload) >= 2:
-                    cmd = payload[1]
-                    cmd_name = iac_commands.get(cmd, f'Unknown ({cmd})')
-                    details.append(['Telnet Command', f"IAC {cmd_name}"])
-            else:
-                # Regular text data
-                text = payload.decode('utf-8', errors='replace')
-                if text.strip():
-                    details.append(['Telnet Data', text[:60].strip()])
         except: pass
 
     @staticmethod
